@@ -1,0 +1,16 @@
+
+
+keyStore:
+  path: #add you certificate path as classpath://keystore/{your certificate name here}.pfx and you can encrypt it 
+  password:  #insert your certificate password encrypted
+  
+http:
+  port: '8081'
+  
+graph-api:
+  client-id:  # insert encrypted client-id
+  aud: 'https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token' #insert  tenant
+  basepath : #insert  tenant
+  host : "login.microsoftonline.com"
+  port : "443"
+  path : "/oauth2/v2.0/token"

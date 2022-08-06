@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:secure-properties="http://www.mulesoft.org/schema/mule/secure-properties" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/secure-properties http://www.mulesoft.org/schema/mule/secure-properties/current/mule-secure-properties.xsd">
+	<http:listener-config name="HTTP_Listener_config" doc:name="HTTP Listener config" doc:id="85a73519-6268-45c6-9958-4c78059e1841" >
+		<http:listener-connection host="0.0.0.0" port="${http.port}" />
+	</http:listener-config>
+	<http:request-config name="HTTP_Request_configuration" doc:name="HTTP Request configuration" doc:id="ff88bde7-b521-47d4-9a59-c44df5c57b0e" basePath="${graph-api.basepath}" >
+		<http:request-connection host="${graph-api.host}" port="${graph-api.port}" protocol="HTTPS"/>
+	</http:request-config>
+	<configuration-properties doc:name="Configuration properties" doc:id="058259bc-1258-4987-9e38-e2f106cfe4e3" file="properties\config.yaml" />
+
+<secure-properties:config name="Secure_Properties_Config" doc:name="Secure Properties Config" doc:id="7a042c35-fce7-4370-abfb-66737278eef2" file="properties\config.yaml" key="${secret.key}" />
+	<sub-flow name="generate-token-flow" doc:id="ed3ac1f2-1f4c-47a2-ac2b-4b43377103eb" >
+		<ee:transform doc:name="Get key and thumbprint from Certificate" doc:id="7ccc73cd-4bd6-4868-baca-1098bee918d1">
+			<ee:message>
+			</ee:message>
+			<ee:variables>
+				<ee:set-variable variableName="pemKey"><![CDATA[%dw 2.0
+import java!com::utils::CommonUtils
+import * from dw::core::Binaries
+output application/java
+
+var key= readUrl(Mule::p("secure::keyStore.path"),'application/octet-stream')
+var keyPassword= Mule::p("secure::keyStore.password")
+---
+CommonUtils::getKey(key,keyPassword)]]></ee:set-variable>
+				<ee:set-variable variableName="thumbPrint"><![CDATA[%dw 2.0
+import java!com::utils::CommonUtils
+import * from dw::core::Binaries
+output application/java
+
+
+var key= readUrl(Mule::p("secure::keyStore.path"),'application/octet-stream')
+var keyPassword= Mule::p("secure::keyStore.password")
+var thumbPrint = CommonUtils::getThumbprintHex(key,keyPassword) default " "
+---
+toBase64(fromHex(thumbPrint))
+]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<ee:transform doc:name="Form JWT Token" doc:id="cdf4792c-7aec-4fdd-9e6e-f7c2aac40974" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="client_assertion" ><![CDATA[%dw 2.0
+import * from jwt::RSA
+output application/json
+var jwt = {
+	token: JWT(
+       {	
+		"alg": "RS256",
+		"typ": "JWT",
+		"x5t": vars.thumbPrint
+	}, 
+        {
+		iss: Mule::p("secure::graph-api.client-id"),
+		aud: Mule::p("secure::graph-api.aud"),
+		sub: Mule::p("secure::graph-api.client-id"),
+		iat: now() as Number {
+			unit: 'seconds'
+		},
+		nbf: (now() - |PT10S|) as Number {
+			unit: 'seconds'
+		},
+		"jti": uuid(),
+		exp: (now() + |PT3600S|) as Number {
+			unit: 'seconds'
+		}
+	} ,
+        vars.pemKey,
+      'Sha256withRSA' 
+    ),
+	expiration: now() + |PT3550S|
+}
+---
+jwt.token]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<http:request method="POST" doc:name="access token" doc:id="533ccc36-7ead-4092-aefb-54a03bbc4a05" config-ref="HTTP_Request_configuration" path="${graph-api.path}" sendCorrelationId="ALWAYS">
+			<http:body ><![CDATA[#[%dw 2.0
+import dw::module::Multipart
+output multipart/form-data
+---
+{
+    parts: {
+        scope: Multipart::field({name: "scope", value:  "https://graph.microsoft.com/.default"}),
+        client_id: Multipart::field({name: "client_id", value:  Mule::p("secure::graph-api.client-id")}),
+        client_assertion_type: Multipart::field({name: "client_assertion_type", value:  "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}),
+        client_assertion: Multipart::field({name: "client_assertion", value:  vars.client_assertion}),
+        grant_type: Multipart::field({name: "grant_type", value:  "client_credentials"}),
+       
+    }
+}]]]></http:body>
+		</http:request>
+		<ee:transform doc:name="Bearer + Token" doc:id="333fa0bc-cfa5-420a-a1ca-53b1cccfa6cc">
+			<ee:message>
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+payload.token_type ++ " " ++ payload.access_token]]></ee:set-payload>
+
+			</ee:message>
+			<ee:variables >
+			</ee:variables>
+		</ee:transform>
+	</sub-flow>
+	<flow name="sharepoint-graph-delete-folder" doc:id="c84472f9-cdfd-4ee1-b61f-8a79810b0da7" >
+		<http:listener doc:name="Listener" doc:id="96658a99-58f4-4781-b11e-023134c9d3f8" config-ref="HTTP_Listener_config" path="/token" allowedMethods="GET"/>
+		<flow-ref doc:name="generate-jwt-token-flow" doc:id="311889b8-5b1c-4a6e-9984-72dffab196f4" name="generate-token-flow"/>
+	</flow>
+	
+</mule>
