@@ -1,6 +1,6 @@
 # Using-Certificate-based-Authentication-with-the-Microsoft-Graph-API-MuleSoft
 
-This is a mulesoft poc code refering which you can fetch access token for microsoft graph api.
+This is a mulesoft poc code refering which you can fetch access token for microsoft graph api which uses the Oauth client credentials certificate based authentication.
 Please replace with your .pfx certificate, password, tenant , client id in property file config.yaml
 Please add your .pfx file under src/main/resources/keystore
 
